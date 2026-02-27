@@ -2,8 +2,8 @@ import math
 from enum import Enum
 
 
-def add_time_interval(field_name, time_interval):
-    return f"{field_name}|{time_interval.value}"
+def add_time_interval(field_name, update_mode):
+    return f"{field_name}|{update_mode}"
 
 
 def add_historical(field_name, historical=1):
@@ -39,12 +39,401 @@ class Field(Enum):
             return add_rec_to_label(self.label)
         return None
 
+    def get_rec_field(self):
+        if self.has_recommendation():
+            return add_rec(self.field_name)
+        return None
+
     @classmethod
     def get_by_label(cls, specific_fields, label):
         for specific_field in specific_fields:
             if specific_field.label == label:
                 return specific_field
         return None
+
+    @classmethod
+    def search(cls, query: str) -> list:
+        """
+        Search fields by name or label.
+
+        :param query: Search query (case-insensitive)
+        :return: List of matching Field enum members
+
+        Example:
+            >>> StockField.search("market cap")
+            [<StockField.MARKET_CAPITALIZATION: ...>, <StockField.MARKET_CAP_BASIC: ...>, ...]
+        """
+        query = query.lower()
+        return [f for f in cls if query in f.name.lower() or query in f.label.lower()]
+
+    @classmethod
+    def by_format(cls, format_type: str) -> list:
+        """
+        Get fields by format type.
+
+        :param format_type: Format type (e.g., 'percent', 'float', 'text', 'recommendation')
+        :return: List of fields with matching format
+
+        Example:
+            >>> StockField.by_format('recommendation')
+            [<StockField.RSI: ...>, <StockField.MACD: ...>, ...]
+        """
+        return [f for f in cls if f.format == format_type]
+
+    @classmethod
+    def technicals(cls) -> list:
+        """
+        Get all technical indicator fields (fields with interval=True).
+
+        :return: List of technical indicator fields
+
+        Example:
+            >>> StockField.technicals()
+            [<StockField.RSI: ...>, <StockField.MACD: ...>, ...]
+        """
+        return [f for f in cls if f.interval]
+
+    @classmethod
+    def with_history(cls) -> list:
+        """
+        Get all fields that support historical lookback.
+
+        :return: List of fields with historical=True
+
+        Example:
+            >>> StockField.with_history()
+            [<StockField.RSI: ...>, <StockField.VOLUME: ...>, ...]
+        """
+        return [f for f in cls if f.historical]
+
+    @classmethod
+    def recommendations(cls) -> list:
+        """
+        Get all recommendation fields.
+
+        :return: List of fields with format='recommendation'
+
+        Example:
+            >>> StockField.recommendations()
+            [<StockField.RSI: ...>, <StockField.STOCH_K: ...>, ...]
+        """
+        return [f for f in cls if f.format == 'recommendation']
+
+    def with_interval(self, interval: str) -> 'FieldWithInterval':
+        """
+        Return a field wrapper with time interval modifier.
+
+        Supported intervals: '1', '5', '15', '30', '60', '120', '240', '1D', '1W', '1M'
+
+        :param interval: Time interval string
+        :return: FieldWithInterval wrapper
+        :raises ValueError: If field does not support intervals
+
+        Example:
+            >>> StockField.RSI.with_interval('1H')
+            FieldWithInterval(RSI, interval='1H')
+        """
+        if not self.interval:
+            raise ValueError(f"{self.name} does not support time intervals")
+        return FieldWithInterval(self, interval)
+
+    def with_history(self, periods: int = 1) -> 'FieldWithHistory':
+        """
+        Return a field wrapper with historical lookback.
+
+        :param periods: Number of periods to look back (default 1)
+        :return: FieldWithHistory wrapper
+        :raises ValueError: If field does not support historical lookback
+
+        Example:
+            >>> StockField.VOLUME.with_history(1)  # Previous period volume
+            FieldWithHistory(VOLUME, periods=1)
+        """
+        if not self.historical:
+            raise ValueError(f"{self.name} does not support historical lookback")
+        return FieldWithHistory(self, periods)
+
+    # Comparison operators for Pythonic filtering syntax
+    def __gt__(self, other) -> 'FieldCondition':
+        """
+        Greater than comparison.
+
+        Example:
+            >>> StockField.PRICE > 100
+        """
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.ABOVE, other)
+
+    def __ge__(self, other) -> 'FieldCondition':
+        """
+        Greater than or equal comparison.
+
+        Example:
+            >>> StockField.PRICE >= 100
+        """
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.ABOVE_OR_EQUAL, other)
+
+    def __lt__(self, other) -> 'FieldCondition':
+        """
+        Less than comparison.
+
+        Example:
+            >>> StockField.PRICE < 100
+        """
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.BELOW, other)
+
+    def __le__(self, other) -> 'FieldCondition':
+        """
+        Less than or equal comparison.
+
+        Example:
+            >>> StockField.PRICE <= 100
+        """
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.BELOW_OR_EQUAL, other)
+
+    def __eq__(self, other) -> 'FieldCondition':
+        """
+        Equality comparison. Returns FieldCondition for value comparisons,
+        or standard enum equality for Field-to-Field comparisons.
+
+        Example:
+            >>> StockField.SECTOR == 'Technology'
+        """
+        # For enum-to-enum comparison, use standard Enum equality
+        if isinstance(other, Field):
+            return self.value == other.value
+        # For Field vs FieldWithInterval/FieldWithHistory, compare field_name
+        if hasattr(other, 'field_name'):
+            return self.field_name == other.field_name
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.EQUAL, other)
+
+    def __ne__(self, other) -> 'FieldCondition':
+        """
+        Not equal comparison. Returns FieldCondition for value comparisons,
+        or standard enum inequality for Field-to-Field comparisons.
+
+        Example:
+            >>> StockField.SECTOR != 'Technology'
+        """
+        # For enum-to-enum comparison, use standard Enum inequality
+        if isinstance(other, Field):
+            return self.value != other.value
+        # For Field vs FieldWithInterval/FieldWithHistory, compare field_name
+        if hasattr(other, 'field_name'):
+            return self.field_name != other.field_name
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.NOT_EQUAL, other)
+
+    def __hash__(self):
+        """Required for Enum when __eq__ is overridden."""
+        return hash(self.value)
+
+    def between(self, min_val, max_val) -> 'FieldCondition':
+        """
+        Check if field value is within a range (inclusive).
+
+        Example:
+            >>> StockField.PRICE.between(50, 100)
+            >>> StockField.MARKET_CAPITALIZATION.between(1e9, 10e9)
+        """
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.IN_RANGE, [min_val, max_val])
+
+    def not_between(self, min_val, max_val) -> 'FieldCondition':
+        """
+        Check if field value is outside a range.
+
+        Example:
+            >>> StockField.PRICE.not_between(50, 100)
+        """
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.NOT_IN_RANGE, [min_val, max_val])
+
+    def isin(self, values: list) -> 'FieldCondition':
+        """
+        Check if field value is in a list of values.
+
+        Example:
+            >>> StockField.SECTOR.isin(['Technology', 'Healthcare'])
+            >>> StockField.EXCHANGE.isin([Exchange.NASDAQ, Exchange.NYSE])
+        """
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.IN_RANGE, values)
+
+    def not_in(self, values: list) -> 'FieldCondition':
+        """
+        Check if field value is not in a list of values.
+
+        Example:
+            >>> StockField.SECTOR.not_in(['Finance', 'Utilities'])
+        """
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.NOT_IN_RANGE, values)
+
+
+class FieldCondition:
+    """Forward declaration for type hints - actual implementation is in filter.py"""
+    pass
+
+
+class FieldWithInterval:
+    """
+    Wrapper for a Field with a time interval modifier.
+
+    This allows specifying different timeframes for technical indicators.
+    """
+
+    def __init__(self, field: Field, interval: str):
+        """
+        Initialize a field with interval wrapper.
+
+        :param field: The base Field enum member
+        :param interval: Time interval (e.g., '1', '5', '15', '1H', '1D', '1W', '1M')
+        """
+        self.field = field
+        self._interval = interval
+        self.field_name = f"{field.field_name}|{interval}"
+        self.label = f"{field.label} ({interval})"
+        self.format = field.format
+        self.interval = True
+        self.historical = field.historical
+        self.name = f"{field.name}_{interval}"  # For repr in FieldCondition
+
+    def __repr__(self):
+        return f"FieldWithInterval({self.field.name}, interval='{self._interval}')"
+
+    # Comparison operators
+    def __gt__(self, other):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.ABOVE, other)
+
+    def __ge__(self, other):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.ABOVE_OR_EQUAL, other)
+
+    def __lt__(self, other):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.BELOW, other)
+
+    def __le__(self, other):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.BELOW_OR_EQUAL, other)
+
+    def __eq__(self, other):
+        # For comparison with Field or FieldWithInterval, compare field_name
+        if isinstance(other, Field) or hasattr(other, 'field_name'):
+            return self.field_name == other.field_name
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.EQUAL, other)
+
+    def __ne__(self, other):
+        # For comparison with Field or FieldWithInterval, compare field_name
+        if isinstance(other, Field) or hasattr(other, 'field_name'):
+            return self.field_name != other.field_name
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.NOT_EQUAL, other)
+
+    def __hash__(self):
+        """Required when __eq__ is overridden."""
+        return hash(self.field_name)
+
+    def between(self, min_val, max_val):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.IN_RANGE, [min_val, max_val])
+
+    def not_between(self, min_val, max_val):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.NOT_IN_RANGE, [min_val, max_val])
+
+    def isin(self, values: list):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.IN_RANGE, values)
+
+    def not_in(self, values: list):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.NOT_IN_RANGE, values)
+
+
+class FieldWithHistory:
+    """
+    Wrapper for a Field with historical lookback.
+
+    This allows getting previous period values for indicators.
+    """
+
+    def __init__(self, field: Field, periods: int = 1):
+        """
+        Initialize a field with historical lookback.
+
+        :param field: The base Field enum member
+        :param periods: Number of periods to look back
+        """
+        self.field = field
+        self.periods = periods
+        self.field_name = f"{field.field_name}[{periods}]"
+        self.label = f"Prev. {field.label}" if periods == 1 else f"{field.label} [{periods}]"
+        self.format = field.format
+        self.interval = field.interval
+        self.historical = True
+        self.name = f"{field.name}_history_{periods}"  # For repr in FieldCondition
+
+    def __repr__(self):
+        return f"FieldWithHistory({self.field.name}, periods={self.periods})"
+
+    # Comparison operators
+    def __gt__(self, other):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.ABOVE, other)
+
+    def __ge__(self, other):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.ABOVE_OR_EQUAL, other)
+
+    def __lt__(self, other):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.BELOW, other)
+
+    def __le__(self, other):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.BELOW_OR_EQUAL, other)
+
+    def __eq__(self, other):
+        # For comparison with Field or FieldWithHistory, compare field_name
+        if isinstance(other, Field) or hasattr(other, 'field_name'):
+            return self.field_name == other.field_name
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.EQUAL, other)
+
+    def __ne__(self, other):
+        # For comparison with Field or FieldWithHistory, compare field_name
+        if isinstance(other, Field) or hasattr(other, 'field_name'):
+            return self.field_name != other.field_name
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.NOT_EQUAL, other)
+
+    def __hash__(self):
+        """Required when __eq__ is overridden."""
+        return hash(self.field_name)
+
+    def between(self, min_val, max_val):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.IN_RANGE, [min_val, max_val])
+
+    def not_between(self, min_val, max_val):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.NOT_IN_RANGE, [min_val, max_val])
+
+    def isin(self, values: list):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.IN_RANGE, values)
+
+    def not_in(self, values: list):
+        from tvscreener.filter import FieldCondition, FilterOperator
+        return FieldCondition(self, FilterOperator.NOT_IN_RANGE, values)
 
 
 class Type(Enum):
@@ -88,21 +477,6 @@ class Rating(Enum):
     @classmethod
     def values(cls):
         return list(map(lambda c: c.value, cls))
-
-
-class TimeInterval(Enum):
-    ONE_MINUTE = "1"
-    FIVE_MINUTES = "5"
-    FIFTEEN_MINUTES = "15"
-    THIRTY_MINUTES = "30"
-    SIXTY_MINUTES = "60"
-    TWO_HOURS = "120"
-    FOUR_HOURS = "240"
-    ONE_DAY = "1D"
-    ONE_WEEK = "1W"
-
-    def update_mode(self):
-        return f"update_mode|{self.value}"
 
 
 class Country(Enum):
@@ -501,3 +875,101 @@ class SymbolType(Enum):
     STRUCTURED = [""]  # ["SP"]
     TRUST_FUND = ["trust"]
     UIT = ["unit"]
+
+
+class IndexSymbol(Enum):
+    """
+    Index symbols for filtering screener results to index constituents.
+
+    Use with Screener.set_index() to filter results to stocks belonging to a specific index.
+
+    Example:
+        >>> ss = StockScreener()
+        >>> ss.set_index(IndexSymbol.SP500)
+        >>> df = ss.get()  # Returns only S&P 500 constituents
+    """
+    # Major US Indices
+    SP500 = ("SP;SPX", "S&P 500")
+    NASDAQ_100 = ("NASDAQ;NDX", "NASDAQ 100")
+    DOW_JONES = ("DJ;DJI", "Dow Jones Industrial Average")
+    NASDAQ_COMPOSITE = ("NASDAQ;IXIC", "NASDAQ Composite")
+    RUSSELL_2000 = ("TVC;RUT", "Russell 2000")
+    RUSSELL_1000 = ("TVC;RUI", "Russell 1000")
+    RUSSELL_3000 = ("TVC;RUA", "Russell 3000")
+    SP100 = ("SP;OEX", "S&P 100")
+    SP_MIDCAP_400 = ("SP;MID", "S&P MidCap 400")
+    MINI_RUSSELL_2000 = ("CBOEFTSE;MRUT", "Mini-Russell 2000")
+
+    # S&P 500 Sectors
+    SP500_ENERGY = ("SP;SPN", "S&P 500 Energy")
+    SP500_INFORMATION_TECHNOLOGY = ("SP;S5INFT", "S&P 500 Information Technology")
+    SP500_HEALTH_CARE = ("SP;S5HLTH", "S&P 500 Health Care")
+    SP500_CONSUMER_STAPLES = ("SP;S5CONS", "S&P 500 Consumer Staples")
+    SP500_UTILITIES = ("SP;S5UTIL", "S&P 500 Utilities")
+    SP500_COMMUNICATION_SERVICES = ("SP;S5TELS", "S&P 500 Communication Services")
+    SP500_CONSUMER_DISCRETIONARY = ("SP;S5COND", "S&P 500 Consumer Discretionary")
+    SP500_INDUSTRIALS = ("SP;S5INDU", "S&P 500 Industrials")
+    SP500_REAL_ESTATE = ("SP;S5REAS", "S&P 500 Real Estate")
+    SP500_MATERIALS = ("SP;S5MATR", "S&P 500 Materials")
+    SP500_FINANCIALS = ("SP;SPF", "S&P 500 Financials")
+    SP500_ESG = ("CBOE;SPESG", "S&P 500 ESG")
+
+    # Dow Jones
+    DOW_JONES_TRANSPORTATION = ("DJ;DJT", "Dow Jones Transportation Average")
+    DOW_JONES_UTILITY = ("DJ;DJU", "Dow Jones Utility Average")
+    DOW_JONES_COMPOSITE = ("DJ;DJA", "Dow Jones Composite Average")
+
+    # NASDAQ Sector Indices
+    NASDAQ_BANK = ("NASDAQ;BANK", "NASDAQ Bank")
+    NASDAQ_BIOTECHNOLOGY = ("NASDAQ;NBI", "NASDAQ Biotechnology")
+    NASDAQ_COMPUTER = ("NASDAQ;IXCO", "NASDAQ Computer")
+    NASDAQ_TELECOMMUNICATIONS = ("NASDAQ;IXTC", "NASDAQ Telecommunications")
+    NASDAQ_TRANSPORTATION = ("NASDAQ;TRAN", "NASDAQ Transportation")
+    NASDAQ_INSURANCE = ("NASDAQ;INSR", "NASDAQ Insurance")
+    NASDAQ_INDUSTRIALS = ("NASDAQ;INDS", "NASDAQ Industrials")
+    NASDAQ_GOLDEN_DRAGON_CHINA = ("NASDAQ;HXC", "NASDAQ Golden Dragon China")
+    NASDAQ_100_TECHNOLOGY = ("NASDAQ;NDXT", "NASDAQ-100 Technology Sector")
+    NASDAQ_INNOVATORS_COMPLETION = ("NASDAQ;NCX", "Nasdaq Innovators Completion Cap")
+    NASDAQ_REAL_ESTATE_FINANCIAL = ("NASDAQ;OFIN", "NASDAQ Real Estate and Other Financial Services")
+    NASDAQ_FOOD_PRODUCERS = ("NASDAQ;NQUSB451020", "NASDAQ US Benchmark Food Producers")
+    NASDAQ_CLEAN_EDGE_GREEN_ENERGY = ("NASDAQ;CELS", "NASDAQ Clean Edge Green Energy")
+    NASDAQ_METAVERSE = ("NASDAQ;NYMETA", "NASDAQ CB Insights Metaverse US Index")
+
+    # NASDAQ Cap Indices
+    NASDAQ_US_LARGE_CAP_GROWTH = ("NASDAQ;NQUSLG", "Nasdaq US Large Cap Growth")
+    NASDAQ_US_MID_CAP_GROWTH = ("NASDAQ;NQUSMG", "Nasdaq US Mid Cap Growth")
+    NASDAQ_US_SMALL_CAP_GROWTH = ("NASDAQ;NQUSSG", "Nasdaq US Small Cap Growth")
+
+    # PHLX Indices
+    PHLX_SEMICONDUCTOR = ("NASDAQ;SOX", "PHLX Semiconductor Sector")
+    PHLX_GOLD_SILVER = ("NASDAQ;XAU", "PHLX Gold/Silver Sector")
+    PHLX_HOUSING = ("NASDAQ;HGX", "PHLX Housing Sector")
+    PHLX_OIL_SERVICE = ("NASDAQ;OSX", "PHLX Oil Service Sector")
+    PHLX_UTILITIES = ("NASDAQ;UTY", "PHLX Utilities Sector")
+
+    # KBW Indices
+    KBW_NASDAQ_BANK = ("NASDAQ;BKX", "KBW NASDAQ Bank")
+    KBW_FINANCIAL_TECHNOLOGY = ("NASDAQ;KFTX", "KBW NASDAQ Financial Technology Index")
+
+    # Other
+    ISE_CLOUD_COMPUTING = ("NASDAQ;CPQ", "ISE CTA Cloud Computing")
+
+    def __init__(self, symbol: str, label: str):
+        self.symbol = symbol
+        self.label = label
+
+    @property
+    def symbolset_value(self) -> str:
+        """Returns the value formatted for the symbolset API parameter."""
+        return f"SYML:{self.symbol}"
+
+    @classmethod
+    def search(cls, query: str) -> list:
+        """
+        Search indices by name or label.
+
+        :param query: Search query (case-insensitive)
+        :return: List of matching IndexSymbol enum members
+        """
+        query = query.lower()
+        return [i for i in cls if query in i.name.lower() or query in i.label.lower()]
